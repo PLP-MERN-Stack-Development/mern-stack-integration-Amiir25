@@ -15,7 +15,7 @@ function App() {
             <Route path="/posts/:id" element={<PostView />} />
             <Route path="/create" element={<PostForm />} />
             <Route path="/edit/:id" element={<PostForm />} />
-            <Route path="/create" element={<ProtectedRoute><PostForm/></ProtectedRoute>} />
+            {/* <Route path="/create" element={<ProtectedRoute><PostForm/></ProtectedRoute>} /> */}
           </Routes>
         </Layout>
       </Router>

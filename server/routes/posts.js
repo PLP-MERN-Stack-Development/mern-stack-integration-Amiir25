@@ -1,72 +1,121 @@
 const express = require('express');
-const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const Post = require('../models/post.js');
+const Post = require('../models/post');
+const auth = require('../middleware/auth');
 
-// GET all posts
+const router = express.Router();
+
+// GET /api/posts?search=&category=&page=1&limit=10
 router.get('/', async (req, res, next) => {
   try {
-    const posts = await Post.find().populate('category');
-    res.json(posts);
+    const { page = 1, limit = 10, search = '', category } = req.query;
+    const q = {};
+
+    if (search) {
+      q.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { content: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (category) q.category = category;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [posts, total] = await Promise.all([
+      Post.find(q)
+        .populate('category')
+        .populate('authorId', 'username')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Post.countDocuments(q)
+    ]);
+
+    res.json({
+      data: posts,
+      meta: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      }
+    });
   } catch (err) {
     next(err);
   }
 });
 
-// GET a specific post
+// GET single
 router.get('/:id', async (req, res, next) => {
   try {
-    const post = await Post.findById(req.params.id).populate('category');
-    if (!post) return res.status(404).json({ message: 'Post not found' });
+    const post = await Post.findById(req.params.id).populate('category').populate('authorId', 'username');
+    if (!post) return res.status(404).json({ message: 'Not found' });
     res.json(post);
   } catch (err) {
     next(err);
   }
 });
 
-// CREATE a new post
-router.post(
-  '/',
-  [
-    body('title').notEmpty().withMessage('Title is required'),
-    body('content').notEmpty().withMessage('Content is required'),
-    body('category').notEmpty().withMessage('Category is required'),
-    body('author').notEmpty().withMessage('Author is required')
-  ],
-  async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+// CREATE (authenticated)
+router.post('/', auth, [
+  body('title').notEmpty(),
+  body('content').notEmpty(),
+  body('category').notEmpty()
+], async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    try {
-      const post = new Post(req.body);
-      const newPost = await post.save();
-      res.status(201).json(newPost);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// UPDATE a post
-router.put('/:id', async (req, res, next) => {
   try {
-    const updatedPost = await Post.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
-    if (!updatedPost) return res.status(404).json({ message: 'Post not found' });
-    res.json(updatedPost);
+    const post = new Post({
+      ...req.body,
+      author: req.user.username,
+      authorId: req.user._id
+    });
+    const saved = await post.save();
+    res.status(201).json(saved);
   } catch (err) {
     next(err);
   }
 });
 
-// DELETE a post
-router.delete('/:id', async (req, res, next) => {
+// UPDATE (only owner)
+router.put('/:id', auth, async (req, res, next) => {
   try {
-    const deletedPost = await Post.findByIdAndDelete(req.params.id);
-    if (!deletedPost) return res.status(404).json({ message: 'Post not found' });
-    res.json({ message: 'Post deleted successfully' });
-  } catch (err) {
-    next(err);
-  }
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Not found' });
+    if (!post.authorId.equals(req.user._id)) return res.status(403).json({ message: 'Forbidden' });
+
+    Object.assign(post, req.body);
+    await post.save();
+    res.json(post);
+  } catch (err) { next(err); }
+});
+
+// DELETE (only owner or admin)
+router.delete('/:id', auth, async (req, res, next) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Not found' });
+    if (!post.authorId.equals(req.user._id) && req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+
+    await post.remove();
+    res.json({ message: 'Deleted' });
+  } catch (err) { next(err); }
+});
+
+// Like/unlike
+router.post('/:id/like', auth, async (req, res, next) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Not found' });
+
+    const idx = post.likes.findIndex(u => u.equals(req.user._id));
+    if (idx === -1) post.likes.push(req.user._id);
+    else post.likes.splice(idx, 1);
+
+    await post.save();
+    res.json({ likes: post.likes.length });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

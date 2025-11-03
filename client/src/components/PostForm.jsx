@@ -3,22 +3,19 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { usePosts } from '../context/PostContext';
 import { validatePost } from '../utils/validation';
 import * as api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
-export default function PostForm() {
+export default function PostForm(){
   const { id } = useParams();
   const navigate = useNavigate();
-  const { categories, addPost, updatePost, loading } = usePosts();
+  const { categories, addPost, updatePost } = usePosts();
+  const { user } = useAuth();
 
-  const [form, setForm] = useState({
-    title: '',
-    content: '',
-    author: '',
-    category: ''
-  });
-  const [formErrors, setFormErrors] = useState({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [form, setForm] = useState({ title:'', content:'', author:'', category:'', image:'' });
+  const [file, setFile] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
 
-  // Fetch existing post data when editing
   useEffect(() => {
     if (id) {
       (async () => {
@@ -28,30 +25,40 @@ export default function PostForm() {
             title: data.title,
             content: data.content,
             author: data.author,
-            category: data.category?._id || ''
+            category: data.category?._id || '',
+            image: data.image || ''
           });
         } catch (err) {
-          console.error('Failed to fetch post:', err);
+          console.error(err);
         }
       })();
+    } else {
+      // set author to current user if available
+      if (user) setForm(f => ({ ...f, author: user.username }));
     }
-  }, [id]);
+  }, [id, user]);
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-    setFormErrors({ ...formErrors, [e.target.name]: '' }); // clear error
+  const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const handleFile = e => {
+    setFile(e.target.files[0]);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const errors = validatePost(form);
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      return;
-    }
+    const v = validatePost(form);
+    if (Object.keys(v).length) { setErrors(v); return; }
 
-    setIsSubmitting(true);
+    setSubmitting(true);
     try {
+      // handle upload first if file present
+      if (file) {
+        const fd = new FormData();
+        fd.append('image', file);
+        const res = await api.uploadImage(fd);
+        form.image = res.data.path; // e.g. /uploads/filename.jpg
+      }
+
       if (id) {
         await updatePost(id, form);
       } else {
@@ -59,135 +66,36 @@ export default function PostForm() {
       }
       navigate('/');
     } catch (err) {
-      console.error('Failed to submit post:', err);
+      console.error(err);
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
   };
 
-  if (loading) return <p>Loading...</p>;
-
   return (
-    <div style={styles.container}>
-      <h1 style={styles.title}>{id ? 'Edit Post' : 'Create Post'}</h1>
+    <div style={{maxWidth:600,margin:'2rem auto',padding:20,background:'#fff',borderRadius:8}}>
+      <h2>{id ? 'Edit Post' : 'Create Post'}</h2>
+      <form onSubmit={handleSubmit} style={{display:'flex',flexDirection:'column',gap:12}}>
+        <input name="title" placeholder="Title" value={form.title} onChange={handleChange} />
+        {errors.title && <small style={{color:'red'}}>{errors.title}</small>}
 
-      <form onSubmit={handleSubmit} style={styles.form}>
-        <div style={styles.field}>
-          <label>Title</label>
-          <input
-            type="text"
-            name="title"
-            value={form.title}
-            onChange={handleChange}
-            style={styles.input}
-            placeholder="Enter post title"
-          />
-          {formErrors.title && <p style={styles.error}>{formErrors.title}</p>}
+        <textarea name="content" placeholder="Content" value={form.content} onChange={handleChange} />
+
+        <input name="author" placeholder="Author" value={form.author} onChange={handleChange} />
+
+        <select name="category" value={form.category} onChange={handleChange}>
+          <option value="">Select category</option>
+          {categories.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
+        </select>
+
+        <div>
+          <label>Featured image</label>
+          <input type="file" accept="image/*" onChange={handleFile} />
+          {form.image && <div><img src={form.image} alt="featured" style={{maxWidth:200,display:'block',marginTop:8}}/></div>}
         </div>
 
-        <div style={styles.field}>
-          <label>Content</label>
-          <textarea
-            name="content"
-            value={form.content}
-            onChange={handleChange}
-            style={styles.textarea}
-            placeholder="Write your post content..."
-          />
-          {formErrors.content && <p style={styles.error}>{formErrors.content}</p>}
-        </div>
-
-        <div style={styles.field}>
-          <label>Author</label>
-          <input
-            type="text"
-            name="author"
-            value={form.author}
-            onChange={handleChange}
-            style={styles.input}
-            placeholder="Author name"
-          />
-          {formErrors.author && <p style={styles.error}>{formErrors.author}</p>}
-        </div>
-
-        <div style={styles.field}>
-          <label>Category</label>
-          <select
-            name="category"
-            value={form.category}
-            onChange={handleChange}
-            style={styles.select}
-          >
-            <option value="">Select a category</option>
-            {categories?.map((cat) => (
-              <option key={cat._id} value={cat._id}>
-                {cat.name}
-              </option>
-            ))}
-          </select>
-          {formErrors.category && <p style={styles.error}>{formErrors.category}</p>}
-        </div>
-
-        <button
-          type="submit"
-          style={styles.button}
-          disabled={isSubmitting}
-        >
-          {isSubmitting ? 'Saving...' : id ? 'Update Post' : 'Create Post'}
-        </button>
+        <button type="submit" disabled={submitting}>{submitting ? 'Saving...' : (id ? 'Update' : 'Create')}</button>
       </form>
     </div>
   );
 }
-
-const styles = {
-  container: {
-    maxWidth: '600px',
-    margin: '2rem auto',
-    padding: '2rem',
-    background: '#f9f9f9',
-    borderRadius: '10px',
-    boxShadow: '0 0 10px rgba(0,0,0,0.1)'
-  },
-  title: {
-    textAlign: 'center',
-    marginBottom: '1.5rem'
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1rem'
-  },
-  field: {
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  input: {
-    padding: '0.5rem',
-    borderRadius: '5px',
-    border: '1px solid #ccc'
-  },
-  textarea: {
-    padding: '0.5rem',
-    borderRadius: '5px',
-    border: '1px solid #ccc',
-    minHeight: '120px'
-  },
-  select: {
-    padding: '0.5rem',
-    borderRadius: '5px',
-    border: '1px solid #ccc'
-  },
-  button: {
-    padding: '0.75rem',
-    backgroundColor: '#007bff',
-    color: 'white',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer'
-  },
-  error: {
-    color: 'red',
-    fontSize: '0.9rem'
-  }
-};

@@ -1,33 +1,27 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+// inside PostView component after fetching post
+import * as api from '../services/api';
+import Comments from './Comments';
+import { useAuth } from '../context/AuthContext';
 
-export default function PostView() {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const [post, setPost] = useState(null);
+const { user } = useAuth();
 
-  useEffect(() => {
-    axios.get(`/api/posts/${id}`)
-      .then(res => setPost(res.data))
-      .catch(err => console.error(err));
-  }, [id]);
+const handleLike = async () => {
+  try {
+    await api.likePost(post._id);
+    // re-fetch or optimistically update
+    const { data } = await api.getPost(post._id);
+    setPost(data);
+  } catch (err) { console.error(err); }
+};
 
-  const handleDelete = async () => {
-    await axios.delete(`/api/posts/${id}`);
-    navigate('/');
-  };
-
-  if (!post) return <p>Loading...</p>;
-
-  return (
+return (
+  <div>
+    <h1>{post.title}</h1>
+    {post.image && <img src={post.image} alt="" style={{maxWidth:400}}/>}
+    <p>{post.content}</p>
     <div>
-      <h1>{post.title}</h1>
-      <p><strong>Category:</strong> {post.category?.name}</p>
-      <p><strong>Author:</strong> {post.author}</p>
-      <p>{post.content}</p>
-      <button onClick={() => navigate(`/edit/${id}`)}>Edit</button>
-      <button onClick={handleDelete}>Delete</button>
+      <button onClick={handleLike}>{post.likes?.length || 0} Like</button>
     </div>
-  );
-}
+    <Comments postId={post._id}/>
+  </div>
+);
